@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE buildings_read_model\n            SET complete_percentage = $1,\n                ready = $2,\n                progressed_ticks = NULL,\n                required_ticks = NULL\n            WHERE site_id = $3\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float4",
+        "Bool",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b238d881726f0d0017212a1779f0ec86b4ff519770ef777245786b6cc697976"
+}

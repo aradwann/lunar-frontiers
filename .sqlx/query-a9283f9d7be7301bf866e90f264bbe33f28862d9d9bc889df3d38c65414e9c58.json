@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO buildings_read_model\n                (site_id, site_type, location, player_id, complete_percentage, ready, progressed_ticks, required_ticks)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            ON CONFLICT (site_id) DO UPDATE SET\n                site_type = EXCLUDED.site_type,\n                location = EXCLUDED.location,\n                player_id = EXCLUDED.player_id,\n                complete_percentage = EXCLUDED.complete_percentage,\n                ready = EXCLUDED.ready,\n                progressed_ticks = EXCLUDED.progressed_ticks,\n                required_ticks = EXCLUDED.required_ticks\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Json",
+        "Uuid",
+        "Float4",
+        "Bool",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9283f9d7be7301bf866e90f264bbe33f28862d9d9bc889df3d38c65414e9c58"
+}

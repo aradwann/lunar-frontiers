@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO construction_site_events (id, site_id, event_type, version, payload)\n            VALUES ($1, $2, $3, $4, $5)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "construction_event_type",
+            "kind": {
+              "Enum": [
+                "site_spawned_v1",
+                "construction_progressed_v1",
+                "construction_completed_v1"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Json"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c11d59caf7b0c45b47d0ac52eb5131c369d478baddfe82d6cc4dd1b315dc446"
+}

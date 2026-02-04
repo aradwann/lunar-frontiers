@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO gameloop_events (id, game_id, event_type, version, payload)\n            VALUES ($1, $2, $3, $4, $5)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "gameloop_event_type",
+            "kind": {
+              "Enum": [
+                "gameloop_advanced_v1"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Json"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7204719d703eb70ea2d7ea0c1d5edb20a614b5ef22a5b993f83b77503f13320a"
+}
