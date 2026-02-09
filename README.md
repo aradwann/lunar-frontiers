@@ -73,31 +73,50 @@ Each event table has:
 
 ### Prerequisites
 
-- Rust 1.70+
-- PostgreSQL 12+
+- Docker and Docker Compose
+- Rust 1.85+ (for local development)
 
-### Setup
+### Docker Compose (recommended)
 
-1. **Create database**:
+Build and start the database, run migrations, and launch the app in one command:
+
 ```bash
-createdb lunar_frontiers
+docker compose up -d
 ```
 
-2. **Set database URL**:
+This starts three services:
+- **db** — PostgreSQL 18 on port 5433
+- **migrate** — applies SQL migrations automatically
+- **app** — the game binary
+
+View logs:
 ```bash
-export DATABASE_URL=postgres://localhost/lunar_frontiers
+docker compose logs -f app
 ```
 
-3. **Run migrations**:
+Stop everything:
 ```bash
-sqlx migrate run
+docker compose down
 ```
 
-4. **Run the game**:
+### Local Development
+
+1. **Start the database**:
 ```bash
-export RUST_LOG=info
+docker compose up -d db
+```
+
+2. **Run migrations**:
+```bash
+cargo sqlx migrate run
+```
+
+3. **Run the game**:
+```bash
 cargo run
 ```
+
+The `.env` file already contains `DATABASE_URL` and `RUST_LOG` so no manual exports are needed.
 
 ### What Happens
 
@@ -185,9 +204,9 @@ src/
 
 ## Testing
 
-Run unit tests:
+Run unit tests (no database required):
 ```bash
-cargo test
+SQLX_OFFLINE=true cargo test
 ```
 
 Example test:

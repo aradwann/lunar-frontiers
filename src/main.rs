@@ -1,21 +1,20 @@
 use log::{error, info};
-use lunar_frontiers::*;
+use lunar_frontiers::aggregates::*;
+use lunar_frontiers::commands::*;
+use lunar_frontiers::event_handlers::SystemsTrigger;
+use lunar_frontiers::event_store::*;
+use lunar_frontiers::events::*;
+use lunar_frontiers::message_broadcaster::MessageBroadcaster;
+use lunar_frontiers::models::*;
+use lunar_frontiers::process_managers::ConstructionProcessManager;
+use lunar_frontiers::projectors::BuildingProjector;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::time::{Duration, interval};
 use uuid::Uuid;
 
-use aggregates::*;
-use commands::*;
-use event_handlers::SystemsTrigger;
-use event_store::*;
-use events::*;
-use models::*;
-use process_managers::ConstructionProcessManager;
-use projectors::BuildingProjector;
-
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), BoxError> {
     env_logger::init();
 
     // Database connection
@@ -69,19 +68,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subscribe to gameloop events and trigger systems
     let mut gameloop_rx = broadcaster.subscribe_gameloop();
     let systems_trigger_clone = systems_trigger.clone();
-    let broadcaster_clone = broadcaster.clone();
+    let _broadcaster_clone = broadcaster.clone();
     tokio::spawn(async move {
         loop {
             match gameloop_rx.recv().await {
                 Ok(event) => {
-                    if let GameloopEvent::Advanced(evt) = event {
-                        if let Err(e) = systems_trigger_clone.handle_gameloop_advanced(&evt).await {
+                    if let GameloopEvent::Advanced(evt) = event
+                        && let Err(e) = systems_trigger_clone.handle_gameloop_advanced(&evt).await {
                             error!("Systems trigger error: {}", e);
                         }
 
                         // Broadcast construction events that were generated
                         // (In a real system, you'd retrieve these from the event store)
-                    }
                 }
                 Err(e) => {
                     error!("Error receiving gameloop event: {}", e);
@@ -121,11 +119,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn spawn_initial_sites(
     construction_store: &ConstructionSiteEventStore,
     building_projector: &BuildingProjector,
-    game_id: Uuid,
+    _game_id: Uuid,
 ) -> Result<(), BoxError> {
     let player_id = Uuid::now_v7();
 
-    let sites = vec![
+    let sites: Vec<(SiteType, Location, u64)> = vec![
         (SiteType::PowerPlant, Location { x: 10, y: 10 }, 5),
         (SiteType::Mine, Location { x: 20, y: 15 }, 8),
         (SiteType::Habitat, Location { x: 5, y: 25 }, 10),
@@ -137,7 +135,7 @@ async fn spawn_initial_sites(
         let cmd = SpawnSite {
             site_id,
             player_id,
-            site_type,
+            site_type: site_type.clone(),
             completion_ticks,
             location: location.clone(),
             tick: 0,
@@ -179,7 +177,7 @@ async fn run_gameloop(
         };
 
         // Get or create gameloop aggregate
-        let aggregate = gameloop_store
+        let aggregate: Gameloop = gameloop_store
             .get_aggregate(game_id)
             .await?
             .unwrap_or_else(|| Gameloop::new(game_id));

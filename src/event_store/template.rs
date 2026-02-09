@@ -24,7 +24,12 @@ pub async fn get_gameloop_events(
     let events = rows
         .into_iter()
         .map(|row| {
-            let serialized: GameloopEvents = serde_json::from_value(row.payload)?;
+            let serialized = match row.event_type {
+                GameloopEventTypes::GameloopAdvancedV1 => {
+                    let inner: GameloopAdvancedV1 = serde_json::from_value(row.payload)?;
+                    GameloopEvents::GameloopAdvancedV1(inner)
+                }
+            };
             Ok(serialized.into())
         })
         .collect::<Result<Vec<_>, EventStoreError>>()?;
@@ -51,7 +56,20 @@ pub async fn get_construction_site_events(
     let events = rows
         .into_iter()
         .map(|row| {
-            let serialized: ConstructionSiteEvents = serde_json::from_value(row.payload)?;
+            let serialized = match row.event_type {
+                ConstructionEventTypes::SiteSpawnedV1 => {
+                    let inner: SiteSpawnedV1 = serde_json::from_value(row.payload)?;
+                    ConstructionSiteEvents::SiteSpawnedV1(inner)
+                }
+                ConstructionEventTypes::ConstructionProgressedV1 => {
+                    let inner: ConstructionProgressedV1 = serde_json::from_value(row.payload)?;
+                    ConstructionSiteEvents::ConstructionProgressedV1(inner)
+                }
+                ConstructionEventTypes::ConstructionCompletedV1 => {
+                    let inner: ConstructionCompletedV1 = serde_json::from_value(row.payload)?;
+                    ConstructionSiteEvents::ConstructionCompletedV1(inner)
+                }
+            };
             Ok(serialized.into())
         })
         .collect::<Result<Vec<_>, EventStoreError>>()?;
@@ -78,7 +96,12 @@ pub async fn get_building_events(
     let events = rows
         .into_iter()
         .map(|row| {
-            let serialized: BuildingEvents = serde_json::from_value(row.payload)?;
+            let serialized = match row.event_type {
+                BuildingEventTypes::BuildingSpawnedV1 => {
+                    let inner: BuildingSpawnedV1 = serde_json::from_value(row.payload)?;
+                    BuildingEvents::BuildingSpawnedV1(inner)
+                }
+            };
             Ok(serialized.into())
         })
         .collect::<Result<Vec<_>, EventStoreError>>()?;

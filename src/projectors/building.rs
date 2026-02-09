@@ -5,7 +5,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::events::{BuildingSpawned, ConstructionProgressed, ConstructionSiteEvent, SiteSpawned};
-use crate::models::{BoxError, BuildingReadModel, Location, SiteType};
+use crate::models::{BoxError, BuildingReadModel};
 
 /// Building projector that maintains read model in both memory (DashMap) and database
 #[derive(Clone)]
@@ -149,7 +149,7 @@ impl BuildingProjector {
         self.buildings.insert(event.site_id, building.clone());
 
         // Update database
-        let location_json = serde_json::to_value(&building.location)?;
+        let _location_json = serde_json::to_value(&building.location)?;
         sqlx::query!(
             r#"
             UPDATE buildings_read_model

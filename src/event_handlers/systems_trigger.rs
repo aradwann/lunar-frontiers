@@ -1,7 +1,6 @@
 use log::{error, info};
 use uuid::Uuid;
 
-use crate::aggregates::ConstructionSite;
 use crate::commands::AdvanceConstruction;
 use crate::event_store::ConstructionSiteEventStore;
 use crate::events::GameloopAdvanced;
@@ -10,6 +9,7 @@ use crate::projectors::BuildingProjector;
 
 /// Event handler that triggers systems on each game tick
 /// Similar to ECS pattern - advances all active systems when gameloop advances
+#[derive(Clone)]
 pub struct SystemsTrigger {
     construction_store: ConstructionSiteEventStore,
     building_projector: BuildingProjector,

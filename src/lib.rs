@@ -1,9 +1,9 @@
-mod aggregates;
-mod commands;
-mod event_handlers;
-mod event_store;
-mod events;
-mod message_broadcaster;
-mod models;
-mod process_managers;
-mod projectors;
+pub mod aggregates;
+pub mod commands;
+pub mod event_handlers;
+pub mod event_store;
+pub mod events;
+pub mod message_broadcaster;
+pub mod models;
+pub mod process_managers;
+pub mod projectors;

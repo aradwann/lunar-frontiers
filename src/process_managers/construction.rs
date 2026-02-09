@@ -2,7 +2,7 @@ use log::info;
 use uuid::Uuid;
 
 use crate::commands::SpawnBuilding;
-use crate::event_store::{BuildingEventStore, EventStoreError};
+use crate::event_store::BuildingEventStore;
 use crate::events::{BuildingEvent, ConstructionCompleted, ConstructionSiteEvent};
 use crate::models::BoxError;
 use crate::projectors::BuildingProjector;

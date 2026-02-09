@@ -20,7 +20,7 @@ pub struct ConstructionSite {
 }
 
 impl ConstructionSite {
-    pub fn new(site_id: Uuid) -> Option<Self> {
+    pub fn new(_site_id: Uuid) -> Option<Self> {
         // Return None for uninitialized aggregate
         None
     }
@@ -101,7 +101,7 @@ impl ConstructionSite {
     }
 
     /// Hydrate aggregate from event history
-    pub fn hydrate(site_id: Uuid, events: Vec<ConstructionSiteEvent>) -> Option<Self> {
+    pub fn hydrate(_site_id: Uuid, events: Vec<ConstructionSiteEvent>) -> Option<Self> {
         if events.is_empty() {
             return None;
         }
