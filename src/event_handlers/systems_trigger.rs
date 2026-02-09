@@ -5,30 +5,22 @@ use crate::commands::AdvanceConstruction;
 use crate::event_store::ConstructionSiteEventStore;
 use crate::events::GameloopAdvanced;
 use crate::models::BoxError;
-use crate::projectors::BuildingProjector;
 
 /// Event handler that triggers systems on each game tick
 /// Similar to ECS pattern - advances all active systems when gameloop advances
 #[derive(Clone)]
 pub struct SystemsTrigger {
     construction_store: ConstructionSiteEventStore,
-    building_projector: BuildingProjector,
 }
 
 impl SystemsTrigger {
-    pub fn new(
-        construction_store: ConstructionSiteEventStore,
-        building_projector: BuildingProjector,
-    ) -> Self {
-        Self {
-            construction_store,
-            building_projector,
-        }
+    pub fn new(construction_store: ConstructionSiteEventStore) -> Self {
+        Self { construction_store }
     }
 
     /// Advance construction for all active sites
     async fn advance_construction(&self, tick: u64) -> Result<(), BoxError> {
-        let active_sites = self.building_projector.active_sites();
+        let active_sites = self.construction_store.get_active_site_ids().await?;
 
         info!(
             "Advancing construction for {} active sites at tick {}",

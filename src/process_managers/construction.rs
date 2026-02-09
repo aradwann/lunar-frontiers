@@ -3,23 +3,18 @@ use uuid::Uuid;
 
 use crate::commands::SpawnBuilding;
 use crate::event_store::BuildingEventStore;
-use crate::events::{BuildingEvent, ConstructionCompleted, ConstructionSiteEvent};
+use crate::events::{ConstructionCompleted, ConstructionSiteEvent};
 use crate::models::BoxError;
-use crate::projectors::BuildingProjector;
 
 /// Process manager that handles construction completion workflow
 /// When construction completes, spawns a building
 pub struct ConstructionProcessManager {
     building_store: BuildingEventStore,
-    building_projector: BuildingProjector,
 }
 
 impl ConstructionProcessManager {
-    pub fn new(building_store: BuildingEventStore, building_projector: BuildingProjector) -> Self {
-        Self {
-            building_store,
-            building_projector,
-        }
+    pub fn new(building_store: BuildingEventStore) -> Self {
+        Self { building_store }
     }
 
     /// Handle ConstructionCompleted event and spawn building
@@ -51,13 +46,6 @@ impl ConstructionProcessManager {
         self.building_store
             .store_event(event.site_id, building_event.clone(), event_id, 1)
             .await?;
-
-        // Update projector
-        if let BuildingEvent::BuildingSpawned(evt) = building_event {
-            self.building_projector
-                .handle_building_spawned(&evt)
-                .await?;
-        }
 
         Ok(())
     }

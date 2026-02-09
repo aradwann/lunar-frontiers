@@ -128,6 +128,11 @@ impl ConstructionSiteEventStore {
         let events = self.get_events(site_id).await?;
         Ok(ConstructionSite::hydrate(site_id, events))
     }
+
+    /// Get all site IDs that have been spawned but not yet completed
+    pub async fn get_active_site_ids(&self) -> Result<Vec<Uuid>, EventStoreError> {
+        template::get_active_construction_site_ids(&self.pool).await
+    }
 }
 
 /// Event store for Building aggregates

@@ -34,19 +34,18 @@ async fn main() -> Result<(), BoxError> {
     let construction_store = ConstructionSiteEventStore::new(pool.clone());
     let building_store = BuildingEventStore::new(pool.clone());
 
-    // Initialize projectors
-    let building_projector = BuildingProjector::new(pool.clone());
-
-    // Initialize process managers
-    let construction_pm =
-        ConstructionProcessManager::new(building_store.clone(), building_projector.clone());
-
-    // Initialize event handlers
-    let systems_trigger =
-        SystemsTrigger::new(construction_store.clone(), building_projector.clone());
-
     // Initialize message broadcaster
     let broadcaster = MessageBroadcaster::new(1000);
+
+    // Initialize projectors — they subscribe to events via the broadcaster
+    let building_projector = BuildingProjector::new(pool.clone());
+    building_projector.start(&broadcaster);
+
+    // Initialize process managers
+    let construction_pm = ConstructionProcessManager::new(building_store.clone());
+
+    // Initialize event handlers
+    let systems_trigger = SystemsTrigger::new(construction_store.clone());
 
     // Game ID
     let game_id = Uuid::now_v7();
@@ -54,7 +53,7 @@ async fn main() -> Result<(), BoxError> {
 
     // Spawn some initial construction sites
     info!("Spawning initial construction sites...");
-    spawn_initial_sites(&construction_store, &building_projector, game_id).await?;
+    spawn_initial_sites(&construction_store, &broadcaster, game_id).await?;
 
     // Start gameloop ticker
     let gameloop_store_clone = gameloop_store.clone();
@@ -68,18 +67,14 @@ async fn main() -> Result<(), BoxError> {
     // Subscribe to gameloop events and trigger systems
     let mut gameloop_rx = broadcaster.subscribe_gameloop();
     let systems_trigger_clone = systems_trigger.clone();
-    let _broadcaster_clone = broadcaster.clone();
     tokio::spawn(async move {
         loop {
             match gameloop_rx.recv().await {
                 Ok(event) => {
-                    if let GameloopEvent::Advanced(evt) = event
-                        && let Err(e) = systems_trigger_clone.handle_gameloop_advanced(&evt).await {
-                            error!("Systems trigger error: {}", e);
-                        }
-
-                        // Broadcast construction events that were generated
-                        // (In a real system, you'd retrieve these from the event store)
+                    let GameloopEvent::Advanced(evt) = event;
+                    if let Err(e) = systems_trigger_clone.handle_gameloop_advanced(&evt).await {
+                        error!("Systems trigger error: {}", e);
+                    }
                 }
                 Err(e) => {
                     error!("Error receiving gameloop event: {}", e);
@@ -118,7 +113,7 @@ async fn main() -> Result<(), BoxError> {
 
 async fn spawn_initial_sites(
     construction_store: &ConstructionSiteEventStore,
-    building_projector: &BuildingProjector,
+    broadcaster: &MessageBroadcaster,
     _game_id: Uuid,
 ) -> Result<(), BoxError> {
     let player_id = Uuid::now_v7();
@@ -147,8 +142,10 @@ async fn spawn_initial_sites(
             .store_event(site_id, event.clone(), Uuid::now_v7(), 1)
             .await?;
 
-        // Update projector
-        building_projector.handle_construction_event(&event).await?;
+        // Broadcast the event — projector will pick it up
+        if let Err(e) = broadcaster.broadcast_construction(event) {
+            error!("Failed to broadcast construction event: {}", e);
+        }
 
         info!(
             "Spawned {} at ({}, {}) - requires {} ticks",

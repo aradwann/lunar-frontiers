@@ -1,13 +1,17 @@
 use dashmap::DashMap;
-use log::info;
+use log::{error, info};
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::events::{BuildingSpawned, ConstructionProgressed, ConstructionSiteEvent, SiteSpawned};
+use crate::events::{
+    BuildingEvent, BuildingSpawned, ConstructionProgressed, ConstructionSiteEvent, SiteSpawned,
+};
+use crate::message_broadcaster::MessageBroadcaster;
 use crate::models::{BoxError, BuildingReadModel};
 
-/// Building projector that maintains read model in both memory (DashMap) and database
+/// Building projector that maintains read model in both memory (DashMap) and database.
+/// Subscribes to events via the message broadcaster — no other component should push to it.
 #[derive(Clone)]
 pub struct BuildingProjector {
     pool: Arc<Pool<Postgres>>,
@@ -22,22 +26,50 @@ impl BuildingProjector {
         }
     }
 
-    /// Get all active construction sites (not yet completed)
-    pub fn active_sites(&self) -> Vec<Uuid> {
-        self.buildings
-            .iter()
-            .filter(|entry| !entry.value().ready)
-            .map(|entry| *entry.key())
-            .collect()
-    }
+    /// Start listening to events from the broadcaster.
+    /// Spawns background tasks that update the read model on each event.
+    pub fn start(&self, broadcaster: &MessageBroadcaster) {
+        let mut construction_rx = broadcaster.subscribe_construction();
+        let mut building_rx = broadcaster.subscribe_building();
 
-    /// Get a building by site_id
-    pub fn get_building(&self, site_id: &Uuid) -> Option<BuildingReadModel> {
-        self.buildings.get(site_id).map(|entry| entry.clone())
+        let projector = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match construction_rx.recv().await {
+                    Ok(event) => {
+                        if let Err(e) = projector.handle_construction_event(&event).await {
+                            error!("BuildingProjector construction event error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("BuildingProjector construction channel error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        let projector = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match building_rx.recv().await {
+                    Ok(event) => {
+                        let BuildingEvent::BuildingSpawned(evt) = &event;
+                        if let Err(e) = projector.handle_building_spawned(evt).await {
+                            error!("BuildingProjector building event error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("BuildingProjector building channel error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Handle SiteSpawned event
-    pub async fn handle_site_spawned(&self, event: &SiteSpawned) -> Result<(), BoxError> {
+    async fn handle_site_spawned(&self, event: &SiteSpawned) -> Result<(), BoxError> {
         info!(
             "Site spawned: {} at ({}, {})",
             event.site_id, event.location.x, event.location.y
@@ -89,7 +121,7 @@ impl BuildingProjector {
     }
 
     /// Handle ConstructionProgressed event
-    pub async fn handle_construction_progressed(
+    async fn handle_construction_progressed(
         &self,
         event: &ConstructionProgressed,
     ) -> Result<(), BoxError> {
@@ -128,7 +160,7 @@ impl BuildingProjector {
     }
 
     /// Handle BuildingSpawned event (construction completed)
-    pub async fn handle_building_spawned(&self, event: &BuildingSpawned) -> Result<(), BoxError> {
+    async fn handle_building_spawned(&self, event: &BuildingSpawned) -> Result<(), BoxError> {
         info!(
             "Building spawned (construction complete): {} at ({}, {})",
             event.site_id, event.location.x, event.location.y
@@ -149,7 +181,6 @@ impl BuildingProjector {
         self.buildings.insert(event.site_id, building.clone());
 
         // Update database
-        let _location_json = serde_json::to_value(&building.location)?;
         sqlx::query!(
             r#"
             UPDATE buildings_read_model
@@ -170,7 +201,7 @@ impl BuildingProjector {
     }
 
     /// Main event handler - dispatches to specific handlers
-    pub async fn handle_construction_event(
+    async fn handle_construction_event(
         &self,
         event: &ConstructionSiteEvent,
     ) -> Result<(), BoxError> {
@@ -180,7 +211,7 @@ impl BuildingProjector {
                 self.handle_construction_progressed(evt).await
             }
             ConstructionSiteEvent::ConstructionCompleted(_) => {
-                // Handled by process manager which spawns building
+                // Handled via building events channel when BuildingSpawned arrives
                 Ok(())
             }
         }

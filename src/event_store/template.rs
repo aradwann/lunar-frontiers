@@ -77,6 +77,26 @@ pub async fn get_construction_site_events(
     Ok(events)
 }
 
+pub async fn get_active_construction_site_ids(
+    pool: &Pool<Postgres>,
+) -> Result<Vec<Uuid>, EventStoreError> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT site_id
+        FROM construction_site_events
+        WHERE event_type = 'site_spawned_v1'
+          AND site_id NOT IN (
+              SELECT site_id FROM construction_site_events
+              WHERE event_type = 'construction_completed_v1'
+          )
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|row| row.site_id).collect())
+}
+
 pub async fn get_building_events(
     pool: &Pool<Postgres>,
     site_id: Uuid,
