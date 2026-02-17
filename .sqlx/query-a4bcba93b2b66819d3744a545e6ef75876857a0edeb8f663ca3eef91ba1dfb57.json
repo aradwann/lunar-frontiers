@@ -12,7 +12,10 @@
             "name": "building_event_type",
             "kind": {
               "Enum": [
-                "building_spawned_v1"
+                "building_spawned_v1",
+                "building_spawned_v2",
+                "building_progressed_v1",
+                "building_completed_v1"
               ]
             }
           }

@@ -121,10 +121,40 @@ pub async fn get_building_events(
                     let inner: BuildingSpawnedV1 = serde_json::from_value(row.payload)?;
                     BuildingEvents::BuildingSpawnedV1(inner)
                 }
+                BuildingEventTypes::BuildingSpawnedV2 => {
+                    let inner: BuildingSpawnedV2Payload = serde_json::from_value(row.payload)?;
+                    BuildingEvents::BuildingSpawnedV2(inner)
+                }
+                BuildingEventTypes::BuildingProgressedV1 => {
+                    let inner: BuildingProgressedV1 = serde_json::from_value(row.payload)?;
+                    BuildingEvents::BuildingProgressedV1(inner)
+                }
+                BuildingEventTypes::BuildingCompletedV1 => {
+                    let inner: BuildingCompletedV1 = serde_json::from_value(row.payload)?;
+                    BuildingEvents::BuildingCompletedV1(inner)
+                }
             };
             Ok(serialized.into())
         })
         .collect::<Result<Vec<_>, EventStoreError>>()?;
 
     Ok(events)
+}
+
+pub async fn get_active_building_ids(pool: &Pool<Postgres>) -> Result<Vec<Uuid>, EventStoreError> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT site_id
+        FROM building_events
+        WHERE event_type = 'building_spawned_v2'
+          AND site_id NOT IN (
+              SELECT site_id FROM building_events
+              WHERE event_type = 'building_completed_v1'
+          )
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|row| row.site_id).collect())
 }

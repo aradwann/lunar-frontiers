@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT site_id\n        FROM building_events\n        WHERE event_type = 'building_spawned_v2'\n          AND site_id NOT IN (\n              SELECT site_id FROM building_events\n              WHERE event_type = 'building_completed_v1'\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "site_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ebb22e6e1b6b764a7299f9bf60d856382a46ce6aff603b8c62656876a7c205bc"
+}

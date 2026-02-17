@@ -182,4 +182,9 @@ impl BuildingEventStore {
         let events = self.get_events(site_id).await?;
         Ok(Building::hydrate(events))
     }
+
+    /// Get all building IDs that have been spawned with V2 but not yet completed
+    pub async fn get_active_building_ids(&self) -> Result<Vec<Uuid>, EventStoreError> {
+        template::get_active_building_ids(&self.pool).await
+    }
 }

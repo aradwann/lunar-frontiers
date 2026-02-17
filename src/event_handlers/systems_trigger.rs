@@ -1,71 +1,76 @@
 use log::{error, info};
 use uuid::Uuid;
 
-use crate::commands::AdvanceConstruction;
-use crate::event_store::ConstructionSiteEventStore;
+use crate::commands::AdvanceBuilding;
+use crate::event_store::BuildingEventStore;
 use crate::events::GameloopAdvanced;
+use crate::message_broadcaster::MessageBroadcaster;
 use crate::models::BoxError;
 
 /// Event handler that triggers systems on each game tick
 /// Similar to ECS pattern - advances all active systems when gameloop advances
 #[derive(Clone)]
 pub struct SystemsTrigger {
-    construction_store: ConstructionSiteEventStore,
+    building_store: BuildingEventStore,
+    broadcaster: MessageBroadcaster,
 }
 
 impl SystemsTrigger {
-    pub fn new(construction_store: ConstructionSiteEventStore) -> Self {
-        Self { construction_store }
+    pub fn new(building_store: BuildingEventStore, broadcaster: MessageBroadcaster) -> Self {
+        Self {
+            building_store,
+            broadcaster,
+        }
     }
 
-    /// Advance construction for all active sites
-    async fn advance_construction(&self, tick: u64) -> Result<(), BoxError> {
-        let active_sites = self.construction_store.get_active_site_ids().await?;
+    /// Advance construction for all active buildings (V2 flow)
+    async fn advance_buildings(&self, tick: u64) -> Result<(), BoxError> {
+        let active_buildings = self.building_store.get_active_building_ids().await?;
 
         info!(
-            "Advancing construction for {} active sites at tick {}",
-            active_sites.len(),
+            "Advancing construction for {} active buildings at tick {}",
+            active_buildings.len(),
             tick
         );
 
-        for site_id in active_sites {
-            if let Err(e) = self.advance_single_site(site_id, tick).await {
-                error!("Failed to advance construction for site {}: {}", site_id, e);
-                // Continue with other sites even if one fails
+        for building_id in active_buildings {
+            if let Err(e) = self.advance_single_building(building_id, tick).await {
+                error!("Failed to advance building {}: {}", building_id, e);
             }
         }
 
         Ok(())
     }
 
-    async fn advance_single_site(&self, site_id: Uuid, tick: u64) -> Result<(), BoxError> {
-        // Get aggregate
+    async fn advance_single_building(&self, building_id: Uuid, tick: u64) -> Result<(), BoxError> {
         let aggregate = self
-            .construction_store
-            .get_aggregate(site_id)
+            .building_store
+            .get_aggregate(building_id)
             .await?
-            .ok_or_else(|| format!("Construction site {} not found", site_id))?;
+            .ok_or_else(|| format!("Building {} not found", building_id))?;
 
-        // Get current version (number of events)
-        let current_version = self.construction_store.get_events(site_id).await?.len() as u64;
+        let current_version = self.building_store.get_events(building_id).await?.len() as u64;
 
-        // Handle command
-        let cmd = AdvanceConstruction {
-            site_id,
+        let cmd = AdvanceBuilding {
+            building_id,
             tick,
             advance_ticks: 1,
         };
 
         let events = aggregate.handle_advance(cmd)?;
 
-        // Store all events generated
         for (i, event) in events.iter().enumerate() {
             let event_id = Uuid::now_v7();
             let version = current_version + i as u64 + 1;
 
-            self.construction_store
-                .store_event(site_id, event.clone(), event_id, version)
+            self.building_store
+                .store_event(building_id, event.clone(), event_id, version)
                 .await?;
+
+            // Broadcast each event so projectors see it
+            if let Err(e) = self.broadcaster.broadcast_building(event.clone()) {
+                error!("Failed to broadcast building event: {}", e);
+            }
         }
 
         Ok(())
@@ -75,8 +80,8 @@ impl SystemsTrigger {
     pub async fn handle_gameloop_advanced(&self, event: &GameloopAdvanced) -> Result<(), BoxError> {
         info!("Gameloop advanced to tick {}", event.tick);
 
-        // Advance construction system every tick
-        self.advance_construction(event.tick).await?;
+        // Advance building construction system every tick
+        self.advance_buildings(event.tick).await?;
 
         // Other systems could be triggered here with different frequencies:
         // - Combat every 2 ticks: if event.tick % 2 == 0

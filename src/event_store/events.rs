@@ -206,9 +206,36 @@ pub struct BuildingSpawnedV1 {
     pub player_id: uuid::Uuid,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BuildingSpawnedV2Payload {
+    pub building_id: uuid::Uuid,
+    pub site_type: crate::models::SiteType,
+    pub location: crate::models::Location,
+    pub player_id: uuid::Uuid,
+    pub tick: u64,
+    pub required_ticks: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BuildingProgressedV1 {
+    pub building_id: uuid::Uuid,
+    pub progressed_ticks: u64,
+    pub required_ticks: u64,
+    pub tick: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BuildingCompletedV1 {
+    pub building_id: uuid::Uuid,
+    pub tick: u64,
+}
+
 #[derive(Deserialize)]
 pub enum BuildingEvents {
     BuildingSpawnedV1(BuildingSpawnedV1),
+    BuildingSpawnedV2(BuildingSpawnedV2Payload),
+    BuildingProgressedV1(BuildingProgressedV1),
+    BuildingCompletedV1(BuildingCompletedV1),
 }
 
 impl From<BuildingEvent> for BuildingEvents {
@@ -219,6 +246,28 @@ impl From<BuildingEvent> for BuildingEvents {
                 site_type: e.site_type,
                 location: e.location,
                 player_id: e.player_id,
+            }),
+            BuildingEvent::BuildingSpawnedV2(e) => {
+                Self::BuildingSpawnedV2(BuildingSpawnedV2Payload {
+                    building_id: e.building_id,
+                    site_type: e.site_type,
+                    location: e.location,
+                    player_id: e.player_id,
+                    tick: e.tick,
+                    required_ticks: e.required_ticks,
+                })
+            }
+            BuildingEvent::BuildingProgressed(e) => {
+                Self::BuildingProgressedV1(BuildingProgressedV1 {
+                    building_id: e.building_id,
+                    progressed_ticks: e.progressed_ticks,
+                    required_ticks: e.required_ticks,
+                    tick: e.tick,
+                })
+            }
+            BuildingEvent::BuildingCompleted(e) => Self::BuildingCompletedV1(BuildingCompletedV1 {
+                building_id: e.building_id,
+                tick: e.tick,
             }),
         }
     }
@@ -233,6 +282,30 @@ impl From<BuildingEvents> for BuildingEvent {
                 location: e.location,
                 player_id: e.player_id,
             }),
+            BuildingEvents::BuildingSpawnedV2(e) => {
+                Self::BuildingSpawnedV2(crate::events::BuildingSpawnedV2 {
+                    building_id: e.building_id,
+                    site_type: e.site_type,
+                    location: e.location,
+                    player_id: e.player_id,
+                    tick: e.tick,
+                    required_ticks: e.required_ticks,
+                })
+            }
+            BuildingEvents::BuildingProgressedV1(e) => {
+                Self::BuildingProgressed(crate::events::BuildingProgressed {
+                    building_id: e.building_id,
+                    progressed_ticks: e.progressed_ticks,
+                    required_ticks: e.required_ticks,
+                    tick: e.tick,
+                })
+            }
+            BuildingEvents::BuildingCompletedV1(e) => {
+                Self::BuildingCompleted(crate::events::BuildingCompleted {
+                    building_id: e.building_id,
+                    tick: e.tick,
+                })
+            }
         }
     }
 }
@@ -244,6 +317,9 @@ impl Serialize for BuildingEvents {
     {
         match self {
             Self::BuildingSpawnedV1(e) => e.serialize(serializer),
+            Self::BuildingSpawnedV2(e) => e.serialize(serializer),
+            Self::BuildingProgressedV1(e) => e.serialize(serializer),
+            Self::BuildingCompletedV1(e) => e.serialize(serializer),
         }
     }
 }
@@ -252,6 +328,9 @@ impl BuildingEvents {
     pub fn event_type(&self) -> BuildingEventTypes {
         match self {
             Self::BuildingSpawnedV1(_) => BuildingEventTypes::BuildingSpawnedV1,
+            Self::BuildingSpawnedV2(_) => BuildingEventTypes::BuildingSpawnedV2,
+            Self::BuildingProgressedV1(_) => BuildingEventTypes::BuildingProgressedV1,
+            Self::BuildingCompletedV1(_) => BuildingEventTypes::BuildingCompletedV1,
         }
     }
 }
@@ -260,4 +339,7 @@ impl BuildingEvents {
 #[sqlx(type_name = "building_event_type", rename_all = "snake_case")]
 pub enum BuildingEventTypes {
     BuildingSpawnedV1,
+    BuildingSpawnedV2,
+    BuildingProgressedV1,
+    BuildingCompletedV1,
 }

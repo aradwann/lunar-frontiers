@@ -6,7 +6,6 @@ use lunar_frontiers::event_store::*;
 use lunar_frontiers::events::*;
 use lunar_frontiers::message_broadcaster::MessageBroadcaster;
 use lunar_frontiers::models::*;
-use lunar_frontiers::process_managers::ConstructionProcessManager;
 use lunar_frontiers::projectors::BuildingProjector;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -31,7 +30,6 @@ async fn main() -> Result<(), BoxError> {
 
     // Initialize event stores
     let gameloop_store = GameloopEventStore::new(pool.clone());
-    let construction_store = ConstructionSiteEventStore::new(pool.clone());
     let building_store = BuildingEventStore::new(pool.clone());
 
     // Initialize message broadcaster
@@ -41,19 +39,16 @@ async fn main() -> Result<(), BoxError> {
     let building_projector = BuildingProjector::new(pool.clone());
     building_projector.start(&broadcaster);
 
-    // Initialize process managers
-    let construction_pm = ConstructionProcessManager::new(building_store.clone());
-
-    // Initialize event handlers
-    let systems_trigger = SystemsTrigger::new(construction_store.clone());
+    // Initialize event handlers (SystemsTrigger now broadcasts events directly)
+    let systems_trigger = SystemsTrigger::new(building_store.clone(), broadcaster.clone());
 
     // Game ID
     let game_id = Uuid::now_v7();
     info!("Starting game with ID: {}", game_id);
 
-    // Spawn some initial construction sites
-    info!("Spawning initial construction sites...");
-    spawn_initial_sites(&construction_store, &broadcaster, game_id).await?;
+    // Spawn some initial buildings (V2 flow — buildings track their own construction)
+    info!("Spawning initial buildings...");
+    spawn_initial_buildings(&building_store, &broadcaster).await?;
 
     // Start gameloop ticker
     let gameloop_store_clone = gameloop_store.clone();
@@ -84,24 +79,6 @@ async fn main() -> Result<(), BoxError> {
         }
     });
 
-    // Subscribe to construction events and handle with process manager
-    let mut construction_rx = broadcaster.subscribe_construction();
-    tokio::spawn(async move {
-        loop {
-            match construction_rx.recv().await {
-                Ok(event) => {
-                    if let Err(e) = construction_pm.handle_event(&event).await {
-                        error!("Process manager error: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error receiving construction event: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-
     info!("Lunar Frontiers is running! Press Ctrl+C to exit.");
 
     // Keep the main task alive
@@ -111,45 +88,44 @@ async fn main() -> Result<(), BoxError> {
     Ok(())
 }
 
-async fn spawn_initial_sites(
-    construction_store: &ConstructionSiteEventStore,
+async fn spawn_initial_buildings(
+    building_store: &BuildingEventStore,
     broadcaster: &MessageBroadcaster,
-    _game_id: Uuid,
 ) -> Result<(), BoxError> {
     let player_id = Uuid::now_v7();
 
-    let sites: Vec<(SiteType, Location, u64)> = vec![
+    let buildings: Vec<(SiteType, Location, u64)> = vec![
         (SiteType::PowerPlant, Location { x: 10, y: 10 }, 5),
         (SiteType::Mine, Location { x: 20, y: 15 }, 8),
         (SiteType::Habitat, Location { x: 5, y: 25 }, 10),
     ];
 
-    for (site_type, location, completion_ticks) in sites {
-        let site_id = Uuid::now_v7();
+    for (site_type, location, required_ticks) in buildings {
+        let building_id = Uuid::now_v7();
 
-        let cmd = SpawnSite {
-            site_id,
+        let cmd = SpawnBuildingV2 {
+            building_id,
             player_id,
             site_type: site_type.clone(),
-            completion_ticks,
             location: location.clone(),
+            required_ticks,
             tick: 0,
         };
 
-        let event = ConstructionSite::handle_spawn(cmd)?;
+        let event = Building::handle_spawn_v2(cmd)?;
 
-        construction_store
-            .store_event(site_id, event.clone(), Uuid::now_v7(), 1)
+        building_store
+            .store_event(building_id, event.clone(), Uuid::now_v7(), 1)
             .await?;
 
         // Broadcast the event — projector will pick it up
-        if let Err(e) = broadcaster.broadcast_construction(event) {
-            error!("Failed to broadcast construction event: {}", e);
+        if let Err(e) = broadcaster.broadcast_building(event) {
+            error!("Failed to broadcast building event: {}", e);
         }
 
         info!(
             "Spawned {} at ({}, {}) - requires {} ticks",
-            site_type, location.x, location.y, completion_ticks
+            site_type, location.x, location.y, required_ticks
         );
     }
 
