@@ -42,7 +42,7 @@ impl std::str::FromStr for SiteType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuildingReadModel {
     pub site_id: Uuid,
     pub site_type: SiteType,

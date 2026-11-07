@@ -1,6 +1,7 @@
 use log::{error, info};
 use uuid::Uuid;
 
+use crate::aggregates::Building;
 use crate::commands::AdvanceBuilding;
 use crate::event_store::BuildingEventStore;
 use crate::events::GameloopAdvanced;
@@ -43,13 +44,11 @@ impl SystemsTrigger {
     }
 
     async fn advance_single_building(&self, building_id: Uuid, tick: u64) -> Result<(), BoxError> {
-        let aggregate = self
-            .building_store
-            .get_aggregate(building_id)
-            .await?
-            .ok_or_else(|| format!("Building {} not found", building_id))?;
+        let history = self.building_store.get_events(building_id).await?;
+        let current_version = history.len() as u64;
 
-        let current_version = self.building_store.get_events(building_id).await?.len() as u64;
+        let aggregate = Building::hydrate(history)
+            .ok_or_else(|| format!("Building {} not found", building_id))?;
 
         let cmd = AdvanceBuilding {
             building_id,

@@ -1,9 +1,12 @@
 use dashmap::DashMap;
-use log::{error, info};
+use log::{error, info, warn};
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
+use crate::aggregates::Building;
+use crate::event_store::BuildingEventStore;
 use crate::events::{
     BuildingCompleted, BuildingEvent, BuildingProgressed, BuildingSpawned, BuildingSpawnedV2,
 };
@@ -18,13 +21,15 @@ use crate::models::{BoxError, BuildingReadModel};
 #[derive(Clone)]
 pub struct BuildingProjector {
     pool: Arc<Pool<Postgres>>,
+    store: BuildingEventStore,
     buildings: Arc<DashMap<Uuid, BuildingReadModel>>,
 }
 
 impl BuildingProjector {
-    pub fn new(pool: Arc<Pool<Postgres>>) -> Self {
+    pub fn new(pool: Arc<Pool<Postgres>>, store: BuildingEventStore) -> Self {
         Self {
             pool,
+            store,
             buildings: Arc::new(DashMap::new()),
         }
     }
@@ -43,8 +48,17 @@ impl BuildingProjector {
                             error!("BuildingProjector building event error: {}", e);
                         }
                     }
-                    Err(e) => {
-                        error!("BuildingProjector building channel error: {}", e);
+                    // Skipped events are still in the event store. Events buffered
+                    // behind the gap replay on top of this in order, so the read
+                    // model converges on the latest state.
+                    Err(RecvError::Lagged(skipped)) => {
+                        warn!("BuildingProjector lagged by {} events, rebuilding", skipped);
+                        if let Err(e) = projector.rebuild().await {
+                            error!("BuildingProjector rebuild error: {}", e);
+                        }
+                    }
+                    Err(RecvError::Closed) => {
+                        info!("BuildingProjector channel closed, stopping");
                         break;
                     }
                 }
@@ -52,73 +66,42 @@ impl BuildingProjector {
         });
     }
 
-    /// Handle V1 legacy BuildingSpawned (already-completed building from process manager)
-    async fn handle_building_spawned_v1(&self, event: &BuildingSpawned) -> Result<(), BoxError> {
-        info!(
-            "Building spawned V1 (legacy, already complete): {} at ({}, {})",
-            event.site_id, event.location.x, event.location.y
-        );
+    /// Rebuild the read model from the event store, the source of truth.
+    /// Covers anything the broadcast channel missed, such as a crash between
+    /// storing an event and broadcasting it.
+    pub async fn rebuild(&self) -> Result<(), BoxError> {
+        let building_ids = self.store.get_all_building_ids().await?;
+        let count = building_ids.len();
 
-        let building = BuildingReadModel {
-            site_id: event.site_id,
-            site_type: event.site_type.clone(),
-            location: event.location.clone(),
-            player_id: event.player_id,
-            complete_percentage: 100.0,
-            ready: true,
-            progressed_ticks: None,
-            required_ticks: None,
-        };
+        for building_id in building_ids {
+            if let Some(aggregate) = self.store.get_aggregate(building_id).await? {
+                let building = BuildingReadModel::from(aggregate);
+                self.upsert(&building).await?;
+                self.buildings.insert(building_id, building);
+            }
+        }
 
-        self.buildings.insert(event.site_id, building.clone());
-
-        let location_json = serde_json::to_value(&building.location)?;
-        sqlx::query!(
-            r#"
-            INSERT INTO buildings_read_model
-                (site_id, site_type, location, player_id, complete_percentage, ready, progressed_ticks, required_ticks)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (site_id) DO UPDATE SET
-                complete_percentage = EXCLUDED.complete_percentage,
-                ready = EXCLUDED.ready,
-                progressed_ticks = EXCLUDED.progressed_ticks,
-                required_ticks = EXCLUDED.required_ticks
-            "#,
-            building.site_id,
-            building.site_type.to_string(),
-            location_json,
-            building.player_id,
-            building.complete_percentage,
-            building.ready,
-            building.progressed_ticks,
-            building.required_ticks,
-        )
-        .execute(self.pool.as_ref())
-        .await?;
-
+        info!("Rebuilt read model for {} buildings", count);
         Ok(())
     }
 
-    /// Handle V2 BuildingSpawnedV2 (new building under construction)
-    async fn handle_building_spawned_v2(&self, event: &BuildingSpawnedV2) -> Result<(), BoxError> {
-        info!(
-            "Building spawned V2: {} at ({}, {}) - requires {} ticks",
-            event.building_id, event.location.x, event.location.y, event.required_ticks
-        );
+    /// Look up one building in the in-memory read model.
+    pub fn get_building(&self, building_id: Uuid) -> Option<BuildingReadModel> {
+        self.buildings
+            .get(&building_id)
+            .map(|entry| entry.value().clone())
+    }
 
-        let building = BuildingReadModel {
-            site_id: event.building_id,
-            site_type: event.site_type.clone(),
-            location: event.location.clone(),
-            player_id: event.player_id,
-            complete_percentage: 0.0,
-            ready: false,
-            progressed_ticks: Some(0),
-            required_ticks: Some(event.required_ticks as i64),
-        };
+    /// All buildings in the in-memory read model.
+    pub fn list_buildings(&self) -> Vec<BuildingReadModel> {
+        self.buildings
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
 
-        self.buildings.insert(event.building_id, building.clone());
-
+    /// Write a full read model row, replacing any existing one.
+    async fn upsert(&self, building: &BuildingReadModel) -> Result<(), BoxError> {
         let location_json = serde_json::to_value(&building.location)?;
         sqlx::query!(
             r#"
@@ -145,6 +128,54 @@ impl BuildingProjector {
         )
         .execute(self.pool.as_ref())
         .await?;
+
+        Ok(())
+    }
+
+    /// Handle V1 legacy BuildingSpawned (already-completed building from process manager)
+    async fn handle_building_spawned_v1(&self, event: &BuildingSpawned) -> Result<(), BoxError> {
+        info!(
+            "Building spawned V1 (legacy, already complete): {} at ({}, {})",
+            event.site_id, event.location.x, event.location.y
+        );
+
+        let building = BuildingReadModel {
+            site_id: event.site_id,
+            site_type: event.site_type.clone(),
+            location: event.location.clone(),
+            player_id: event.player_id,
+            complete_percentage: 100.0,
+            ready: true,
+            progressed_ticks: None,
+            required_ticks: None,
+        };
+
+        self.upsert(&building).await?;
+        self.buildings.insert(event.site_id, building);
+
+        Ok(())
+    }
+
+    /// Handle V2 BuildingSpawnedV2 (new building under construction)
+    async fn handle_building_spawned_v2(&self, event: &BuildingSpawnedV2) -> Result<(), BoxError> {
+        info!(
+            "Building spawned V2: {} at ({}, {}) - requires {} ticks",
+            event.building_id, event.location.x, event.location.y, event.required_ticks
+        );
+
+        let building = BuildingReadModel {
+            site_id: event.building_id,
+            site_type: event.site_type.clone(),
+            location: event.location.clone(),
+            player_id: event.player_id,
+            complete_percentage: 0.0,
+            ready: false,
+            progressed_ticks: Some(0),
+            required_ticks: Some(event.required_ticks as i64),
+        };
+
+        self.upsert(&building).await?;
+        self.buildings.insert(event.building_id, building);
 
         Ok(())
     }
@@ -225,5 +256,78 @@ impl BuildingProjector {
             BuildingEvent::BuildingProgressed(evt) => self.handle_building_progressed(evt).await,
             BuildingEvent::BuildingCompleted(evt) => self.handle_building_completed(evt).await,
         }
+    }
+}
+
+impl From<Building> for BuildingReadModel {
+    fn from(building: Building) -> Self {
+        // Matches what the event handlers produce: tick counters only exist
+        // while under construction.
+        let (complete_percentage, progressed_ticks, required_ticks) =
+            match (building.completed, building.required_ticks) {
+                (false, Some(required)) => (
+                    (building.completed_ticks as f32 / required as f32) * 100.0,
+                    Some(building.completed_ticks as i64),
+                    Some(required as i64),
+                ),
+                _ => (100.0, None, None),
+            };
+
+        Self {
+            site_id: building.building_id,
+            site_type: building.site_type,
+            location: building.location,
+            player_id: building.player_id,
+            complete_percentage,
+            ready: building.completed,
+            progressed_ticks,
+            required_ticks,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Location, SiteType};
+
+    fn building(completed_ticks: u64, required_ticks: Option<u64>, completed: bool) -> Building {
+        Building {
+            building_id: Uuid::now_v7(),
+            site_type: SiteType::Mine,
+            location: Location { x: 1, y: 2 },
+            player_id: Uuid::now_v7(),
+            required_ticks,
+            completed_ticks,
+            completed,
+        }
+    }
+
+    #[test]
+    fn test_read_model_under_construction() {
+        let model = BuildingReadModel::from(building(2, Some(8), false));
+
+        assert_eq!(model.complete_percentage, 25.0);
+        assert!(!model.ready);
+        assert_eq!(model.progressed_ticks, Some(2));
+        assert_eq!(model.required_ticks, Some(8));
+    }
+
+    #[test]
+    fn test_read_model_completed_v2_clears_tick_counters() {
+        let model = BuildingReadModel::from(building(8, Some(8), true));
+
+        assert_eq!(model.complete_percentage, 100.0);
+        assert!(model.ready);
+        assert_eq!(model.progressed_ticks, None);
+        assert_eq!(model.required_ticks, None);
+    }
+
+    #[test]
+    fn test_read_model_legacy_v1_is_complete() {
+        let model = BuildingReadModel::from(building(0, None, true));
+
+        assert_eq!(model.complete_percentage, 100.0);
+        assert!(model.ready);
     }
 }

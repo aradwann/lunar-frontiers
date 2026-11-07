@@ -158,3 +158,34 @@ pub async fn get_active_building_ids(pool: &Pool<Postgres>) -> Result<Vec<Uuid>,
 
     Ok(rows.into_iter().map(|row| row.site_id).collect())
 }
+
+/// All building IDs with at least one stored event, completed or not.
+pub async fn get_all_building_ids(pool: &Pool<Postgres>) -> Result<Vec<Uuid>, EventStoreError> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT site_id
+        FROM building_events
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|row| row.site_id).collect())
+}
+
+/// The most recently started-or-ticked game. Event IDs are UUIDv7, so the
+/// primary key sorts by creation time.
+pub async fn get_latest_game_id(pool: &Pool<Postgres>) -> Result<Option<Uuid>, EventStoreError> {
+    let row = sqlx::query!(
+        r#"
+        SELECT game_id
+        FROM gameloop_events
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|row| row.game_id))
+}

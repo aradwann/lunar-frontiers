@@ -1,4 +1,5 @@
 pub mod aggregates;
+pub mod api;
 pub mod commands;
 pub mod event_handlers;
 pub mod event_store;

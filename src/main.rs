@@ -1,5 +1,6 @@
-use log::{error, info};
+use log::{error, info, warn};
 use lunar_frontiers::aggregates::*;
+use lunar_frontiers::api;
 use lunar_frontiers::commands::*;
 use lunar_frontiers::event_handlers::SystemsTrigger;
 use lunar_frontiers::event_store::*;
@@ -9,8 +10,12 @@ use lunar_frontiers::models::*;
 use lunar_frontiers::projectors::BuildingProjector;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Duration, interval};
 use uuid::Uuid;
+
+const HTTP_ADDR: &str = "0.0.0.0:8080";
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
@@ -36,31 +41,59 @@ async fn main() -> Result<(), BoxError> {
     let broadcaster = MessageBroadcaster::new(1000);
 
     // Initialize projectors — they subscribe to events via the broadcaster
-    let building_projector = BuildingProjector::new(pool.clone());
+    let building_projector = BuildingProjector::new(pool.clone(), building_store.clone());
     building_projector.start(&broadcaster);
+
+    // Catch up on anything that was stored but never projected
+    building_projector.rebuild().await?;
 
     // Initialize event handlers (SystemsTrigger now broadcasts events directly)
     let systems_trigger = SystemsTrigger::new(building_store.clone(), broadcaster.clone());
 
-    // Game ID
-    let game_id = Uuid::now_v7();
-    info!("Starting game with ID: {}", game_id);
+    // Resume the latest game, or start a new one with its initial buildings
+    let gameloop = match gameloop_store.get_latest_game_id().await? {
+        Some(game_id) => {
+            let gameloop = gameloop_store
+                .get_aggregate(game_id)
+                .await?
+                .ok_or(EventStoreError::AggregateNotFound(game_id))?;
+            info!("Resuming game {} at tick {}", game_id, gameloop.tick);
+            gameloop
+        }
+        None => {
+            let gameloop = Gameloop::new(Uuid::now_v7());
+            info!("Starting game with ID: {}", gameloop.game_id);
 
-    // Spawn some initial buildings (V2 flow — buildings track their own construction)
-    info!("Spawning initial buildings...");
-    spawn_initial_buildings(&building_store, &broadcaster).await?;
+            // V2 flow — buildings track their own construction
+            info!("Spawning initial buildings...");
+            spawn_initial_buildings(&building_store, &broadcaster).await?;
+            gameloop
+        }
+    };
+
+    // Serve the read model and health endpoint
+    let listener = TcpListener::bind(HTTP_ADDR).await?;
+    info!("HTTP server listening on {}", HTTP_ADDR);
+    let router = api::router(pool.clone(), building_projector.clone());
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, router).await {
+            error!("HTTP server error: {}", e);
+        }
+    });
+
+    // Subscribe before the first tick so no gameloop event is missed
+    let mut gameloop_rx = broadcaster.subscribe_gameloop();
 
     // Start gameloop ticker
     let gameloop_store_clone = gameloop_store.clone();
     let broadcaster_clone = broadcaster.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_gameloop(game_id, gameloop_store_clone, broadcaster_clone).await {
+        if let Err(e) = run_gameloop(gameloop, gameloop_store_clone, broadcaster_clone).await {
             error!("Gameloop error: {}", e);
         }
     });
 
-    // Subscribe to gameloop events and trigger systems
-    let mut gameloop_rx = broadcaster.subscribe_gameloop();
+    // Trigger systems on each gameloop event
     let systems_trigger_clone = systems_trigger.clone();
     tokio::spawn(async move {
         loop {
@@ -71,8 +104,12 @@ async fn main() -> Result<(), BoxError> {
                         error!("Systems trigger error: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("Error receiving gameloop event: {}", e);
+                // Missed ticks are not replayed; the next tick carries on from here
+                Err(RecvError::Lagged(skipped)) => {
+                    warn!("Systems trigger lagged by {} ticks", skipped);
+                }
+                Err(RecvError::Closed) => {
+                    info!("Gameloop channel closed, stopping systems trigger");
                     break;
                 }
             }
@@ -133,40 +170,37 @@ async fn spawn_initial_buildings(
 }
 
 async fn run_gameloop(
-    game_id: Uuid,
+    mut gameloop: Gameloop,
     gameloop_store: GameloopEventStore,
     broadcaster: MessageBroadcaster,
 ) -> Result<(), BoxError> {
     let mut tick_interval = interval(Duration::from_secs(2));
-    let mut current_tick = 0u64;
 
+    // This task is the only writer, so the aggregate stays in memory instead of
+    // being replayed from the event store every tick.
     loop {
         tick_interval.tick().await;
-        current_tick += 1;
+        let tick = gameloop.tick + 1;
 
         let cmd = AdvanceGameloop {
-            game_id,
-            tick: current_tick,
+            game_id: gameloop.game_id,
+            tick,
         };
 
-        // Get or create gameloop aggregate
-        let aggregate: Gameloop = gameloop_store
-            .get_aggregate(game_id)
-            .await?
-            .unwrap_or_else(|| Gameloop::new(game_id));
-
-        let event = aggregate.handle_advance(cmd)?;
+        let event = gameloop.handle_advance(cmd)?;
 
         // Store event
         gameloop_store
-            .store_event(game_id, event.clone(), Uuid::now_v7(), current_tick)
+            .store_event(gameloop.game_id, event.clone(), Uuid::now_v7(), tick)
             .await?;
+
+        gameloop.apply(&event);
 
         // Broadcast event
         if let Err(e) = broadcaster.broadcast_gameloop(event) {
             error!("Failed to broadcast gameloop event: {}", e);
         }
 
-        info!("Tick {}", current_tick);
+        info!("Tick {}", tick);
     }
 }

@@ -10,6 +10,7 @@ The game currently simulates:
 - A tick-based gameloop (one tick every 2 seconds)
 - Buildings that self-track their own construction progress
 - A read model projector that maintains a queryable view of all buildings
+- An HTTP API that serves the read model and a health check
 
 ## Architecture
 
@@ -48,11 +49,25 @@ Each aggregate has a dedicated event store backed by a PostgreSQL table:
 | `BuildingEventStore` | `building_events` | `store_event`, `get_aggregate`, `get_active_building_ids` |
 | `ConstructionSiteEventStore` | `construction_site_events` | `store_event`, `get_aggregate` (legacy) |
 
-Events are stored with a `event_type` VARCHAR discriminator and a JSON payload. Deserialization uses the discriminator to select the correct variant — not `serde`'s tagged enum format — because the stored payload is a flat struct, not a tagged wrapper.
+Events are stored with an `event_type` PostgreSQL enum discriminator and a JSON payload. Deserialization uses the discriminator to select the correct variant — not `serde`'s tagged enum format — because the stored payload is a flat struct, not a tagged wrapper.
 
 #### Projectors (`src/projectors/`)
 
-**`BuildingProjector`** maintains the `buildings_read_model` table and an in-memory `DashMap`. It subscribes to the building broadcast channel and handles all building event types (V1 and V2).
+**`BuildingProjector`** maintains the `buildings_read_model` table and an in-memory `DashMap`. It subscribes to the building broadcast channel and handles all building event types (V1 and V2). It rebuilds from the event store on startup and whenever it lags behind the channel, so events missed by the broadcast are recovered.
+
+#### HTTP API (`src/api.rs`)
+
+Listens on port 8080.
+
+| Route | Response |
+|---|---|
+| `GET /health` | `200` if the database is reachable, otherwise `503` |
+| `GET /buildings` | All buildings from the read model |
+| `GET /buildings/{id}` | One building, or `404` |
+
+#### Restarts
+
+On startup the app resumes the latest game from `gameloop_events` at its last tick. Initial buildings are only spawned when no game exists yet.
 
 #### Event Handlers (`src/event_handlers/`)
 
@@ -169,6 +184,7 @@ src/
 ├── lib.rs                        # Module exports
 ├── main.rs                       # App entry point
 ├── models.rs                     # Shared types (Location, SiteType, BuildingReadModel)
+├── api.rs                        # HTTP routes (health, read model queries)
 ├── message_broadcaster.rs        # Tokio broadcast channel wrappers
 ├── aggregates/
 │   ├── gameloop.rs               # Gameloop aggregate

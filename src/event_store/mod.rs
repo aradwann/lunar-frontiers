@@ -73,6 +73,11 @@ impl GameloopEventStore {
             Ok(Some(Gameloop::hydrate(game_id, events)))
         }
     }
+
+    /// The game to resume on startup, if any game has been played.
+    pub async fn get_latest_game_id(&self) -> Result<Option<Uuid>, EventStoreError> {
+        template::get_latest_game_id(&self.pool).await
+    }
 }
 
 /// Event store for ConstructionSite aggregates
@@ -186,5 +191,10 @@ impl BuildingEventStore {
     /// Get all building IDs that have been spawned with V2 but not yet completed
     pub async fn get_active_building_ids(&self) -> Result<Vec<Uuid>, EventStoreError> {
         template::get_active_building_ids(&self.pool).await
+    }
+
+    /// Get every building ID in the store, used to rebuild read models
+    pub async fn get_all_building_ids(&self) -> Result<Vec<Uuid>, EventStoreError> {
+        template::get_all_building_ids(&self.pool).await
     }
 }
