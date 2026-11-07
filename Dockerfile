@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.94-slim-trixie AS builder
+FROM rust:1.99-slim-trixie AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends pkg-config libssl-dev && \

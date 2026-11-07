@@ -217,7 +217,7 @@ src/
 ### Prerequisites
 
 - Docker and Docker Compose
-- Rust 1.94+ (for local development)
+- Rust 1.99+ (for local development)
 
 ### Docker Compose (recommended)
 
