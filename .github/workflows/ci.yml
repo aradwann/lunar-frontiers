@@ -54,11 +54,11 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/sqlx
-          key: sqlx-cli-${{ runner.os }}-0.8
+          key: sqlx-cli-${{ runner.os }}-0.9
       - name: Install sqlx-cli
         run: |
           if ! command -v sqlx &> /dev/null; then
-            cargo install sqlx-cli --no-default-features --features postgres --locked
+            cargo install sqlx-cli --version "^0.9" --no-default-features --features postgres --locked
           fi
       - name: Run migrations
         run: sqlx migrate run

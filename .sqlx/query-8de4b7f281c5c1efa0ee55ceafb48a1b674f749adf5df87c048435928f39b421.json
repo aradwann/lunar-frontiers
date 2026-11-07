@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "construction_site_events",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
@@ -22,17 +28,35 @@
               ]
             }
           }
+        },
+        "origin": {
+          "Table": {
+            "table": "construction_site_events",
+            "name": "event_type"
+          }
         }
       },
       {
         "ordinal": 2,
         "name": "payload",
-        "type_info": "Json"
+        "type_info": "Json",
+        "origin": {
+          "Table": {
+            "table": "construction_site_events",
+            "name": "payload"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "version",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "construction_site_events",
+            "name": "version"
+          }
+        }
       }
     ],
     "parameters": {
